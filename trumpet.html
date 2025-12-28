@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Trumpet Simulator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body { background: #121212; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; text-align: center; padding-top: 20px; user-select: none; overflow: hidden; }
+        .instructions { color: #888; margin-bottom: 20px; font-size: 0.9rem; }
+        .ghosting-notice { color: #ff4444; font-size: 0.75rem; margin-top: 5px; font-style: italic; }
+        .label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 2px; margin: 15px 0 5px; color: #ffd700; }
+        .row { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; }
+        .key { width: 45px; height: 45px; border: 2px solid #333; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: bold; background: #222; transition: all 0.05s; flex-direction: column; }
+        .valve { width: 65px; height: 110px; border-radius: 30px; border: 4px solid #444; }
+        .valve span { font-size: 0.7rem; color: #888; margin-top: 5px; }
+        .active-octave { background: #2e5bff !important; border-color: #fff !important; box-shadow: 0 0 15px #2e5bff; color: white; }
+        .active-valve { background: #ffd700 !important; border-color: #fff !important; box-shadow: 0 0 15px #ffd700; color: black; transform: translateY(8px); }
+        #display { margin-top: 30px; }
+        #noteName { font-size: 4rem; font-weight: bold; color: #fff; margin: 0; opacity: 0.2; }
+        #airStatus { font-size: 1rem; letter-spacing: 3px; color: #444; margin-top: 10px; font-weight: bold; }
+        .is-playing #noteName { opacity: 1; text-shadow: 0 0 20px #fff; color: #ffd700; }
+        .is-playing #airStatus { color: #00ff00; text-shadow: 0 0 10px #00ff00; }
+        #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #121212; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; }
+        .spinner { width: 50px; height: 50px; border: 5px solid #333; border-top: 5px solid #ffd700; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body id="mainBody">
+
+    <div id="loading">
+        <div class="spinner"></div>
+        <div>LOADING TRUMPET SAMPLES...</div>
+    </div>
+    
+    <h1>Trumpet Simulator</h1>
+    
+    <div class="instructions">
+        Partials: <b>None, A, S, D, F, G, H/Y</b> | Valves: <b>J, K, L</b> | Sound: <b>Space</b>
+        <div class="ghosting-notice">Transposed for Bb Trumpet. Use <b>Y</b> or <b>Shift</b> if H fails.</div>
+    </div>
+
+    <div class="label">Partials</div>
+    <div class="row">
+        <div id="keyA" class="key">A</div>
+        <div id="keyS" class="key">S</div>
+        <div id="keyD" class="key">D</div>
+        <div id="keyF" class="key">F</div>
+        <div id="keyG" class="key">G</div>
+        <div id="keyH" class="key">H/Y</div>
+    </div>
+
+    <div class="label">Valves</div>
+    <div class="row">
+        <div id="valveJ" class="key valve">J <span>(1)</span></div>
+        <div id="valveK" class="key valve">K <span>(2)</span></div>
+        <div id="valveL" class="key valve">L <span>(3)</span></div>
+    </div>
+
+    <div id="display">
+        <p id="noteName">--</p>
+        <p id="airStatus">NOT BLOWING</p>
+    </div>
+
+    <script>
+        const trumpet = new Tone.Sampler({
+            urls: {
+                "A3": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trumpet-mp3/A3.mp3",
+                "C4": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trumpet-mp3/C4.mp3",
+                "E4": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trumpet-mp3/E4.mp3",
+                "G4": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trumpet-mp3/G4.mp3",
+                "C5": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trumpet-mp3/C5.mp3",
+                "G5": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trumpet-mp3/G5.mp3"
+            },
+            // Fast release prevents the "set time" overlap
+            release: 0.1,
+            onload: () => {
+                document.getElementById("loading").style.display = "none";
+            }
+        }).toDestination();
+
+        const pressed = { a:false, s:false, d:false, f:false, g:false, h:false, y:false, j:false, k:false, l:false, " ":false, shift:false };
+
+        function getNote() {
+            let base = "C4"; 
+            if (pressed.h || pressed.y || pressed.shift) base = "C6";
+            else if (pressed.g) base = "Bb5";
+            else if (pressed.f) base = "G5";
+            else if (pressed.d) base = "E5";
+            else if (pressed.s) base = "C5";
+            else if (pressed.a) base = "G4";
+
+            let drop = 0;
+            if (pressed.k) drop += 1;
+            if (pressed.j) drop += 2;
+            if (pressed.l) drop += 3;
+
+            return Tone.Frequency(base).transpose(-drop).transpose(-2).toNote();
+        }
+
+        window.addEventListener("keydown", async (e) => {
+            if (Tone.context.state !== 'running') await Tone.start();
+            const k = e.key.toLowerCase();
+            if (k === "shift") { pressed.shift = true; return; }
+            if (k in pressed) { if (k === " ") e.preventDefault(); pressed[k] = true; }
+        });
+
+        window.addEventListener("keyup", (e) => {
+            const k = e.key.toLowerCase();
+            if (k === "shift") { pressed.shift = false; return; }
+            if (k in pressed) pressed[k] = false;
+        });
+
+        let isPlaying = false;
+        let currentNote = "";
+
+        function loop() {
+            const note = getNote();
+            const noteDisplay = document.getElementById("noteName");
+            const writtenNote = Tone.Frequency(note).transpose(2).toNote();
+            noteDisplay.innerText = writtenNote;
+
+            // Update UI
+            document.getElementById("keyA").classList.toggle("active-octave", pressed.a);
+            document.getElementById("keyS").classList.toggle("active-octave", pressed.s);
+            document.getElementById("keyD").classList.toggle("active-octave", pressed.d);
+            document.getElementById("keyF").classList.toggle("active-octave", pressed.f);
+            document.getElementById("keyG").classList.toggle("active-octave", pressed.g);
+            document.getElementById("keyH").classList.toggle("active-octave", pressed.h || pressed.y || pressed.shift);
+            document.getElementById("valveJ").classList.toggle("active-valve", pressed.j);
+            document.getElementById("valveK").classList.toggle("active-valve", pressed.k);
+            document.getElementById("valveL").classList.toggle("active-valve", pressed.l);
+
+            if (pressed[" "]) {
+                document.getElementById("mainBody").classList.add("is-playing");
+                document.getElementById("airStatus").innerText = "BLOWING";
+                
+                if (!isPlaying || currentNote !== note) { 
+                    // KILL all previous notes immediately before starting the new one
+                    trumpet.releaseAll();
+                    trumpet.triggerAttack(note); 
+                    currentNote = note;
+                    isPlaying = true; 
+                }
+            } else {
+                document.getElementById("mainBody").classList.remove("is-playing");
+                document.getElementById("airStatus").innerText = "NOT BLOWING";
+                if (isPlaying) { 
+                    trumpet.releaseAll(); // Stop immediately when air stops
+                    isPlaying = false; 
+                    currentNote = "";
+                }
+            }
+            requestAnimationFrame(loop);
+        }
+        loop();
+    </script>
+</body>
+</html>
